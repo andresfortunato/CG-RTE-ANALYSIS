@@ -1,0 +1,1318 @@
+---
+title: "10 years of the Right to Education Act in Chhattisgarh"
+output:
+  word_document: default
+  html_document: default
+---
+
+---
+
+```{r setup, echo=FALSE, message=FALSE}
+
+packages <- c("tidyverse", "raster", "rgeos", "viridis", "ggrepel", "patchwork", "gganimate", "hrbrthemes", "stargazer", "mapproj", "data.table")
+
+for (p in packages){
+  library(p, character.only = TRUE)
+}
+
+
+```
+
+
+## Introduction
+
+bla bla bla 
+
+```{r echo = FALSE, warning=FALSE}
+
+#PREPARE SPACIAL DATA FOR Chhattisgarh
+#Load spacial data for Chhattisgarh
+chhattisgarh_spacial <- getData("GADM", country = "India", level = 2) %>% 
+  subset(NAME_1 == "Chhattisgarh")
+
+#Tranform spacial data to dataframe
+chhattisgarh_spacial_df <- fortify(chhattisgarh_spacial)  
+#Change column type for id
+chhattisgarh_spacial_df$id <- as.integer(chhattisgarh_spacial_df$id)  
+
+#See what the ids are
+ids <- chhattisgarh_spacial_df %>% distinct(id)
+
+#Create dataframe that maps district ids to district names
+district_id_to_name <- data.frame(id = ids, district = chhattisgarh_spacial@data$NAME_2)
+
+#Replace some district names 
+district_id_to_name$district <- district_id_to_name$district %>% str_replace("Uttar Bastar Kanker", "Kanker")
+district_id_to_name$district <- district_id_to_name$district %>% str_replace("Kabeerdham", "Kawardha")
+
+#Merge spacial data with ids_to_names
+map_df <- inner_join(chhattisgarh_spacial_df, district_id_to_name, by = "id")
+#Change column type and format
+map_df$district <- as.character(map_df$district)
+
+```
+
+```{r echo = FALSE}
+#CREATE DATAFRAME FOR DISTRICT CENTERS
+
+#Get center coordinates of each district
+district_centers <- data.frame(gCentroid(chhattisgarh_spacial, byid = TRUE))  
+
+#Add district name column to district_centers
+district_centers$district <- district_id_to_name$district
+
+#Fix some locations
+district_centers$x[district_centers$district == "Bilaspur" ] <- 82
+district_centers$y[district_centers$district == "Bilaspur" ] <- 22.7
+district_centers$x[district_centers$district == "Dantewada" ] <- 81.5
+district_centers$y[district_centers$district == "Dantewada" ] <- 18.7
+district_centers$x[district_centers$district == "Mahasamund" ] <- 82.9
+district_centers$y[district_centers$district == "Mahasamund" ] <- 21.2
+```
+
+```{r echo=FALSE}
+#LOAD AND PREPARE EDUCATION DATA FOR Chhattisgarh
+#Load data
+cg_data <- read.csv("data_cg_summ.csv")
+
+#Select only district and total columns
+cg_rte_dist <- cg_data %>% dplyr::select(district, total)
+
+#Change columns types and format
+cg_rte_dist$district <- as.character(cg_rte_dist$district)
+cg_rte_dist$district <- cg_rte_dist$district %>% str_remove(" ") 
+
+cg_rte_dist$total <- as.character(cg_rte_dist$total)
+cg_rte_dist$total <- cg_rte_dist$total %>% str_remove(",")
+cg_rte_dist$total <- as.numeric(cg_rte_dist$total)
+
+#Change name for Baloda Bazar district
+cg_rte_dist$district <- cg_rte_dist$district %>% str_replace("BalodaBazar", "Baloda Bazar")
+
+#Add id column to df
+cg_rte_dist <- left_join(cg_rte_dist, district_id_to_name, by = "district")
+
+# Comprobar que los distritos coincidan en data espacial y educacional
+map_df %>% dplyr::select(district) %>% anti_join(cg_rte_dist, map_df, by = "district") %>% distinct(district)
+```
+
+## Summary statistics
+
+*Here we do an introduction to education and sociodemographics of CG*. This report was made with data gathered by Indus Action in partnership with the Education Department of the State Government of Chhattisgarh. To understand the dimensions of RTE implementation in each district, we can start by visualizing the number of students in each of them.
+
+```{r echo = FALSE, fig.width = 13, fig.height = 8}
+
+#NUMBER OF STUDENTS PER DISTRICT BAR CHAT
+cg_rte_dist %>% 
+  group_by(district) %>% 
+  distinct(total) %>% 
+  ggplot() +
+  geom_bar(aes(x = total, y = fct_reorder(district, total), fill = total), stat = "identity") +
+  geom_text(aes(x = total, y = fct_reorder(district, total), label = total), color = "black", size = 3.5, fontface = "bold", vjust = 0.5, hjust = -0.3) +
+  scale_fill_viridis(option = "C") +
+  scale_color_viridis(option = "C") +
+  labs(title = "Number of RTE students per district in Chhattisgarh (2010-2019)", x ="", y="") +
+  theme_bw() +
+  theme(legend.position = "none",
+        title = element_text(size = 18, face = "bold"),
+        panel.grid.major = element_line(color = "grey80"), 
+        panel.grid.minor = element_blank(), 
+        axis.text = element_text(face = "bold", size = 12))
+
+```
+
+We can also visualize it geographically:
+
+```{r echo = FALSE, fig.width = 7, fig.height = 7}
+
+# plot the map 
+
+cg_rte_dist <- cg_rte_dist %>% 
+  mutate(color = 
+           ifelse(total <= 5000, "Less than 5000", 
+                  ifelse(total > 5000 & total <= 10000, 
+                         "5000-10000", ifelse(total > 10000 & total <= 15000, "10000-15000", 
+                                              ifelse(total > 15000 & total <= 20000, "15000-20000", 
+                                                     ifelse(total > 20000, "More than 20000", NA))))))
+
+
+ggplot() +
+  geom_map(map = map_df, data = cg_rte_dist, 
+           aes(map_id = id, fill = fct_reorder(color, total, .desc = TRUE)), 
+           color = "white", alpha = 2/4) + 
+  geom_text(data = district_centers, aes(label = district, x = x, y = y, fontface = "bold"), color = "black", size = 2.7) +
+  coord_map() + 
+  labs(x = "", y = "", 
+       title = "Number of students enrolled in schools \nthrough RTE in 2019\n", 
+       fill = "Number of students",
+       caption = "Source: Department of School Education of Chhattisgarh") + 
+  theme_minimal() +
+  scale_fill_viridis(option = "F", discrete = TRUE, direction = -1) +
+  expand_limits(x = c(80, 85), y = c(17, 25)) +
+   theme(title = element_text(size = 15, face = "bold"),
+         axis.text.x = element_blank(), 
+         axis.text.y = element_blank(), 
+         plot.caption = element_text(hjust = 4.5))
+  
+
+```
+
+
+```{r echo = FALSE}
+
+#Data cleaning of attendance, grades and rank
+#read the data
+distritos <- cg_rte_dist$district
+distritos_f <- str_c(distritos, ".csv")
+## read files
+myfiles = lapply(distritos_f, fread, drop = c("School_name", "Medium", "StudentName", "Caste", "Gender"))
+
+attendance_performance <- myfiles %>% 
+  reduce(rbind) 
+
+#rename
+
+attendance_performance <- attendance_performance %>% 
+  rename(student_id = 1, district_code = 2, district = 3, udise_code = 4,
+         class_code = 5, class_name = 6, language = 7, caste = 8, gender = 9, 
+         year_join = 10, year_performance = 11, total_students = 12,  grade = 13, rank = 14, 
+         year_attendance = 15, attendance = 16)
+
+#we assume that negative values and values over 1000 are typos, so we make them all positive and substract 1000 for those above 1000
+attendance_performance <- attendance_performance %>% mutate(attendance = abs(attendance))
+
+attendance_performance <- attendance_performance %>% mutate(attendance = ifelse(attendance > 1000, attendance-1000, attendance))
+
+#we assume negative ranks are only typos
+attendance_performance <- attendance_performance %>% mutate(rank = abs(rank))
+
+#fix year_join
+attendance_performance$year_join <- as.character(attendance_performance$year_join)
+attendance_performance$year_join <- str_c("201", attendance_performance$year_join)
+attendance_performance$year_join <- as.numeric(attendance_performance$year_join)
+attendance_performance <- attendance_performance %>% mutate(year_join = year_join-1)
+
+#year_rank
+attendance_performance$year_performance <- as.character(attendance_performance$year_performance)
+attendance_performance$year_performance <- str_c("201", attendance_performance$year_performance)
+attendance_performance$year_performance <- as.numeric(attendance_performance$year_performance)
+attendance_performance <- attendance_performance %>% mutate(year_performance = year_performance-1)
+
+#year_attendance
+attendance_performance$year_attendance <- as.character(attendance_performance$year_attendance)
+attendance_performance$year_attendance <- str_c("201", attendance_performance$year_attendance)
+attendance_performance$year_attendance <- as.numeric(attendance_performance$year_attendance)
+attendance_performance <- attendance_performance %>% mutate(year_attendance = year_attendance-1)
+
+# fix the districts to match the map names
+attendance_performance$district <- str_to_title(attendance_performance$district)
+attendance_performance$district <- attendance_performance$district %>% 
+  str_replace("Koria", "Koriya")
+
+attendance_performance$district <- attendance_performance$district %>% 
+  str_replace("Gariyaband", "Gariaband")
+attendance_performance$district <- attendance_performance$district %>% 
+  str_replace("Balodabazar-Bhathapara", "Baloda Bazar")
+attendance_performance$district <- attendance_performance$district %>% 
+  str_replace("Sakti", "Janjgir-Champa")
+attendance_performance$district <- attendance_performance$district %>% 
+  str_replace("Sarguja", "Surguja")
+
+attendance_performance <- attendance_performance %>%
+  mutate(district_code = ifelse(district_code == 999, 405, 405))
+
+```
+
+
+In order to get a better sense of general RTE implementation per districts, we need to know how significant the number of RTE students is per district. That is, we need to do a proportion of RTE students per total school enrollment. That way we can find if the districts are doing well with respect to their total student population.
+
+Map the proportion of RTE students to total enrollment in 2019
+
+```{r echo = FALSE}
+#read and clean enrollment data
+
+enrollment_2019_1to8 <- read.csv("enrollment_total_1to8.csv", stringsAsFactors = FALSE)
+enrollment_2019_1to8 <- enrollment_2019_1to8 %>% 
+  rename(district = 1)
+
+enrollment_2019_1to8$district <- str_to_title(enrollment_2019_1to8$district)
+enrollment_2019_1to8$district <- enrollment_2019_1to8$district %>% str_replace("Baster", "Bastar")
+enrollment_2019_1to8$district <- enrollment_2019_1to8$district %>% str_replace("Balodabazar", "Baloda Bazar")
+enrollment_2019_1to8$district <- enrollment_2019_1to8$district %>% str_replace("Janjgir Champa", "Janjgir-Champa")
+
+# clean characters 
+enrollment_2019_1to8$schools <- str_remove(enrollment_2019_1to8$schools, ",")
+enrollment_2019_1to8$enrollment_1to5 <- str_remove(enrollment_2019_1to8$enrollment_1to5, ",")
+enrollment_2019_1to8$enrollment_6to8 <- str_remove(enrollment_2019_1to8$enrollment_6to8, ",")
+
+#transform to numbers 
+enrollment_2019_1to8$schools <- as.numeric(as.character(enrollment_2019_1to8$schools))
+enrollment_2019_1to8$enrollment_1to5 <- as.numeric(as.character(enrollment_2019_1to8$enrollment_1to5))
+enrollment_2019_1to8$enrollment_6to8 <- as.numeric(as.character(enrollment_2019_1to8$enrollment_6to8))
+
+```
+
+```{r}
+
+
+#read and clean rte data
+cg_data_2019 <- read.csv("cg_data_2019.csv") %>% 
+  rename(district_code = 1) %>% 
+  dplyr::select(-X)
+  
+codes_names <- attendance_performance %>% 
+  dplyr::select(district_code, district) %>% 
+  group_by(district) %>% 
+  distinct(district_code)
+
+#join
+cg_data_2019 <- left_join(cg_data_2019, codes_names, by = "district_code")
+cg_data_2019 <- cg_data_2019 %>% dplyr::select(district, everything())
+
+enrollment_rte_2019_1to4 <- cg_data_2019 %>% 
+  group_by(district) %>% 
+  summarise(rte_students = n()) %>% 
+  left_join(enrollment_2019_1to8, by = "district") %>% 
+  dplyr::select(district, enrollment_1to5, rte_students)
+
+enrollment_rte_2019_1to4 <- enrollment_rte_2019_1to4 %>%
+  group_by(district) %>% 
+  summarise(rte_prop_enroll = rte_students*100/enrollment_1to5)
+
+#join to the mapping dataframe
+cg_rte_dist <- left_join(cg_rte_dist, enrollment_rte_2019_1to4, by = "district")
+```
+
+
+```{r echo = FALSE, fig.width = 7, fig.height = 7}
+#MAP 
+ggplot() +
+  geom_map(map = map_df, data = cg_rte_dist, 
+           aes(map_id = id, fill = rte_prop_enroll),
+           color = "white", alpha = 2/4) +
+  geom_text(data = district_centers, aes(label = district, x = x, y = y, fontface = "bold"), 
+            color = "darkblue", size = 2.5) +
+  coord_map() + 
+  labs(x = "", y = "", 
+       title = "How many students per 100 enrolled in a school \nthrough RTE in 2019?", 
+       subtitle = "Nursery, K.G. 1 and first grade",
+       fill = "",
+       caption = "Source: Indus Action & Department of School Education of Chhattisgarh") + 
+  theme_minimal() +
+  scale_fill_continuous(low = "red", high = "green") +
+  expand_limits(x = c(80, 85), y = c(17, 25)) +
+   theme(axis.text.x = element_blank(), axis.text.y = element_blank(), 
+  plot.caption = element_text(hjust = 0)) +
+  guides(fill = guide_colorbar(barwidth = 0.5, 
+                               barheight = 10, title.position = "left",
+                               title.theme = element_text(angle = 90),
+                               title.hjust = .5))
+
+```
+
+
+
+
+Now we do it for 2018, because in 2019 we only have data of RTE students of the first years
+
+```{r warning = FALSE, echo = FALSE}
+
+#READ ENROLLMENT DATA
+enrollment_2018 <- read.csv("enrollment_2018.csv")
+enrollment_2018 <- enrollment_2018 %>% rename(district = 1)
+
+#fix names
+enrollment_2018$district <- str_to_title(enrollment_2018$district)
+enrollment_2018$district <- enrollment_2018$district %>% str_replace("Baster", "Bastar")
+enrollment_2018$district <- enrollment_2018$district %>% str_replace("Balodabazar", "Baloda Bazar")
+enrollment_2018$district <- enrollment_2018$district %>% str_replace("Janjgir - Champa", "Janjgir-Champa")
+
+#calculate total enrollment per school
+
+enrollment_2018_total <- enrollment_2018 %>% 
+  mutate(total = C001+C002+C003+C004+C005+C006+C007+C008+C009+C010+C011+C012) %>% 
+  group_by(district) %>% 
+  summarise(total = sum(total))
+
+rte_proportion_2018 <- attendance_performance %>%
+  filter(year_attendance == 2018) %>% 
+  group_by(district) %>% 
+  summarise(rte_students = n()) %>% 
+  left_join(enrollment_2018_total, by = "district") %>% 
+  dplyr::select(district, total, rte_students)
+
+rte_proportion_2018 <- rte_proportion_2018 %>%
+  group_by(district) %>% 
+  summarise(rte_prop_enroll = rte_students*100/total)
+
+#add ids
+rte_proportion_2018 <- cg_rte_dist %>% 
+  dplyr::select(district, id) %>% 
+  left_join(rte_proportion_2018, by = "district")
+
+```
+
+
+```{r warning = FALSE, echo = FALSE, fig.width = 7, fig.height = 7}
+
+#MAP 
+ggplot() +
+  geom_map(map = map_df, data = rte_proportion_2018, 
+           aes(map_id = id, fill = rte_prop_enroll),
+           color = "white", alpha = 2/4) +
+  geom_text(data = district_centers, aes(label = district, x = x, y = y, fontface = "bold"), 
+            color = "darkblue", size = 2.5) +
+  coord_map() + 
+  labs(x = "", y = "", 
+       title = "How many students per 100 enrolled in a school \nthrough RTE in 2018?", 
+       subtitle = "",
+       fill = "",
+       caption = "Source: Indus Action & Department of School Education of Chhattisgarh") + 
+  theme_minimal() +
+  scale_fill_continuous(low = "red", high = "green") +
+  expand_limits(x = c(80, 85), y = c(17, 25)) +
+   theme(axis.text.x = element_blank(), axis.text.y = element_blank(), 
+  plot.caption = element_text(hjust = 0)) +
+  guides(fill = guide_colorbar(barwidth = 0.3, 
+                               barheight = 8, title.position = "left",
+                               title.theme = element_text(angle = 90),
+                               title.hjust = .5))
+
+```
+
+We can also see the proportion of RTE students per class in 2018
+
+```{r warning = FALSE, echo = FALSE, fig.width = 10, fig.height = 6}
+rte_class <- attendance_performance %>%
+  filter(year_attendance == 2018) %>% 
+  group_by(class_code) %>% 
+  summarise(n = n())
+
+enroll_class <- enrollment_2018 %>% 
+  dplyr::select(C001:C012) %>% 
+  pivot_longer(cols = C001:C012, values_to = "total", names_to = "class_code") %>% 
+  group_by(class_code) %>% 
+  summarise(total = sum(total))
+
+prop_class <- left_join(rte_class, enroll_class, by = "class_code")
+
+prop_class <- prop_class %>% 
+  group_by(class_code) %>% 
+  mutate(proportion = n*100/total)
+
+prop_class <- attendance_performance %>% 
+  dplyr::select(class_code, class_name) %>% 
+  distinct(class_code, class_name) %>% 
+  left_join(prop_class, by = "class_code")
+
+prop_class$class_code <- as.numeric(str_remove(prop_class$class_code, "^C"))
+
+prop_class$class_name <- str_replace(prop_class$class_name, "-Class", "")
+
+prop_class <- prop_class %>% 
+  rename("grade" = "class_name")
+
+ggplot(prop_class) +
+  geom_bar(aes(x = proportion, y = fct_reorder(grade, class_code, .desc = TRUE), fill = proportion), stat = "identity") +
+  theme(legend.position = "none") +
+  scale_fill_viridis(option = "C") +
+  labs(title = "How many RTE students per class are in Chhattisgarh (2018)?", y ="", x="RTE students per a 100") +
+  theme_ipsum() +
+  theme(legend.position = "none", 
+        panel.grid.major = element_line(color = "grey80"), 
+        panel.grid.minor = element_blank(), 
+        axis.text = element_text(face = "bold"))
+
+## change axis text position
+```
+
+In order to get a first glimpse of the social characteristics of the districts, we can plot the distribution of caste and gender.
+
+
+```{r echo = FALSE, fig.width = 9, fig.height = 4}
+
+#in 2018....
+# caste
+caste_sum <- attendance_performance %>% 
+  filter(caste == "GEN" | caste == "OBC" | caste == "SC" | caste == "ST") %>% 
+  group_by(caste, district) %>% 
+  summarise(n = n()) 
+
+caste_sum <- caste_sum %>%
+  group_by(district) %>% 
+  mutate(total = sum(n))
+  
+caste_sum <- caste_sum %>% 
+  group_by(district, caste) %>% 
+  summarise(ratio = n/total)
+
+caste_sum <- caste_sum %>% 
+  arrange(district) %>% 
+  group_by(district) %>% 
+  mutate(n = group_indices())
+  
+  ggplot(caste_sum) +
+  geom_bar(aes(ratio*100, fct_reorder(as.factor(district), n, .desc = TRUE), fill = caste), 
+           position = "stack", stat = "identity") +
+  labs(title = "Caste distribution of RTE students per district", x = "", y = "", 
+       caption = "Source: Department of School Education of Chhattisgarh") +
+  theme_minimal()
+
+  
+```
+
+```{r echo = FALSE, fig.width = 7, fig.height = 7}
+caste_map <- caste_sum %>% 
+  group_by(district) %>% 
+  arrange(desc(ratio)) %>% 
+  slice(1) %>% 
+  ungroup()
+
+caste_map <- left_join(cg_rte_dist, caste_map, by = "district")
+
+ggplot() +
+  geom_map(map = map_df, data = caste_map, 
+           aes(map_id = id, fill = caste),
+           color = "white", alpha = 2/4) +
+  geom_text(data = district_centers, aes(label = district, x = x, y = y, fontface = "bold"), 
+            color = "darkblue", size = 2.5) +
+  coord_map() + 
+  labs(x = "", y = "", 
+       title = "RTE students by the largerst caste", 
+       subtitle = "",
+       fill = "",
+       caption = "Source: Indus Action & Department of School Education of Chhattisgarh") + 
+  theme_minimal() +
+  expand_limits(x = c(80, 85), y = c(17, 25)) +
+  theme(axis.text.x = element_blank(), 
+        axis.text.y = element_blank(), 
+  plot.caption = element_text(hjust = 0))
+```
+
+
+```{r echo = FALSE, fig.width = 9, fig.height = 4} 
+
+#in 2018....
+# gender
+
+attendance_performance$gender <- str_to_lower(attendance_performance$gender)
+
+gender_sum <- attendance_performance %>% 
+  filter(year_attendance == 2018) %>% 
+  filter(gender == "boy" | gender == "girl" | gender == "other") %>% 
+  group_by(gender, district) %>% 
+  summarise(n = n()) 
+
+gender_sum <- gender_sum %>%
+  group_by(district) %>% 
+  mutate(total = sum(n))
+  
+gender_sum <- gender_sum %>% 
+  group_by(district, gender) %>% 
+  summarise(ratio = n/total)
+
+gender_sum <- gender_sum %>% 
+  arrange(district) %>% 
+  group_by(district) %>% 
+  mutate(n = group_indices())
+  
+  ggplot(gender_sum) +
+  geom_bar(aes(ratio, fct_reorder(as.factor(district), n, .desc = TRUE), fill = gender), position = "stack", stat = "identity") +
+  labs(title = "Gender distribution of RTE students per district", x = "", y = "", 
+       caption = "Source: Department of School Education of Chhattisgarh") +
+  theme_minimal()
+  
+
+```
+
+## Index of student performance
+
+
+```{r}
+## check for mungeli
+attendance_performance %>% 
+  filter(district == "Mungeli" & year_performance == 2018 & rank <= total_students) %>% 
+  group_by(udise_code, class_name) %>% 
+  summarise(rank = rank, rank_fraction = rank*100/total_students)
+
+## too many 0 rank, more than half
+attendance_performance %>% 
+  group_by(rank) %>% 
+  summarise(n = n())
+##too many missing values to be a representative measure
+## we cannot compare 
+
+attendance_performance %>% 
+  filter(rank == 0) %>% 
+  group_by(rank, district) %>% 
+  summarise(n = n())
+
+## But its kinda balanced so we'll visualize it the same. 
+
+attendance_performance %>% 
+  filter(rank != 0) %>% 
+  group_by(district) %>% 
+  count()
+
+```
+
+```{r echo=FALSE, fig.height=9, fig.width=9, warning=FALSE}
+
+
+attendance_performance$total_students <- abs(attendance_performance$total_students)
+
+attendance_performance %>% 
+  filter(year_performance == 2018 & rank <= total_students) %>% 
+  group_by(udise_code, class_name) %>% 
+  mutate(rank_fraction = rank/total_students) %>% 
+  group_by(district) %>% 
+  summarise(avg_rank = mean(rank_fraction, na.rm = TRUE)) %>% 
+  ggplot() +
+  geom_bar(aes(x = avg_rank, y = fct_reorder(district, avg_rank, .desc = TRUE), fill = avg_rank), stat = "identity") +
+  scale_fill_viridis(option = "C", direction = -1) +
+  theme_minimal() +
+  labs(title = "Index of student performance per district in 2018",
+       subtitle = "Average ranking position with respect to the number of students in the class", 
+       caption = "Source: Indus Action & Department of School Education, Chhattisgarh", 
+       x = "Average percentile", 
+       y = "") +
+  theme(legend.position = "none", 
+        plot.title = element_text(size = 18, face = "bold", vjust=6),
+        plot.subtitle = element_text(size = 14, vjust=6),
+        plot.margin = margin(1.5, .5, 1.5, .5, "cm"),
+        plot.caption = element_text(size = 12, vjust=-15),
+        axis.text.y = element_text(size = 14), 
+        axis.title.x = element_text(size = 14))
+
+```
+
+
+
+```{r}
+attendance_performance %>% 
+  filter(year_attendance == 2018) %>% 
+  group_by(student_id, udise_code, class_code) %>% 
+  count()
+
+## problem with data: we have the same student in the same class 9 or 8 times 
+## that means that the class doesnt correspond with the years of attendance and performance
+## we have the same class for all of them, and different combinations of years of 
+## attendance and performance
+## one idea to fix this: we assume the class is the one the student attended in the last year
+## and we make the previous years, previous classes
+
+attendance_performance %>% 
+  group_by(year_attendance) %>% 
+  count()
+
+attendance_performance %>% 
+  group_by(year_performance) %>% 
+  count()
+```
+
+```{r}
+
+## fixing divergence in attendance and performance
+
+data2 <- attendance_performance %>% 
+  group_by(student_id) %>% 
+  mutate(year_attendance = ifelse(year_attendance == year_performance, year_attendance, NA)) %>% 
+  na.omit()
+
+## fixing order of class per year
+## we assume that the class is the one the student attended during the last year
+
+data2 <- data2 %>% 
+  group_by(class_code) %>% 
+  mutate(class_n = as.integer(str_sub(class_code, start = 3, end = 4)))
+
+data2 <-
+  data2 %>%
+  arrange(student_id, desc(year_attendance)) %>%
+  group_by(student_id) %>%
+  mutate(n = class_n - row_number() + 1) %>%
+  ungroup() 
+
+cl <- data2 %>% 
+  dplyr::select(class_code, class_name, class_n) %>% 
+  group_by(class_code, class_name, class_n) %>%
+  summarise(n = n()) %>% 
+  dplyr::select(-n)
+
+data2 <- data2 %>% 
+  dplyr::select(-class_n, -class_code, -class_name) %>% 
+  rename(class_n = n)
+
+data2 <- data2 %>% 
+  left_join(cl, by = "class_n")
+   
+```
+
+```{r echo=FALSE, fig.height=5, fig.width=9, warning=FALSE}
+## check the grades
+
+data2 %>% 
+  group_by(grade) %>% 
+  count() %>% 
+  mutate(grade_l = { 
+              if (grade == 0) {
+                NA
+                } else if (grade == 1) {
+                  "A+"
+                  } else if (grade == 2) {
+                    "A"
+                    } else if (grade == 3) {
+                      "B+"
+                    } else if (grade == 4) {
+                      "B"
+                    } else if (grade == 5) {
+                      "C+"
+                    } else if (grade == 6) {
+                      "C"
+                    } else if (grade == 7) {
+                      "D+"
+                    } else if (grade == 8) {
+                      "D"
+                    } else if (grade == 9) {
+                      "E+"
+                    } else if (grade == 10) {
+                      "E"
+                    } else if (grade == 11) {
+                      "F+"
+                    } else if (grade == 12) {
+                      "F"
+                    }
+                }) %>% 
+  na.omit() %>% 
+  ggplot() +
+  geom_bar(aes(n, fct_reorder(grade_l, grade, .desc = TRUE), fill = n), stat = "identity") +
+  theme_minimal() +
+  labs(x = "", y = "", title = "Average distribution of grades for RTE students (2010-2018)") +
+  theme(legend.position = "none") +
+  scale_fill_continuous(high = "green")
+
+```
+
+## Attendance index
+
+The attendance of students to school is a relevant index to measure the performance of 
+Chhattisgarh is one of the states implementing an online MIS system to track student attendance in an accountable way. 
+
+The average attendance per district is more or less similar in every district, but this does not tell use where the schools with exceptionally low or high attendance are. We also don't know the proportion of low to high attendance in each district. It is not a good way of measuring performance. 
+
+```{r warning = FALSE, echo = FALSE, fig.width = 7, fig.height = 4}
+data2 %>% 
+  filter(year_attendance == 2018) %>% 
+  mutate(att_rate = attendance/278) %>% 
+  group_by(district) %>%
+  summarise(avg_att = mean(att_rate)) %>% 
+  ggplot() +
+  geom_bar(aes(fct_reorder(district, avg_att), avg_att), stat = "identity") +
+  coord_flip() +
+  labs(x = "", y = "") +
+  theme_minimal()
+
+```
+
+If we take the average per school, we see some of them are way below the median. We can try to locate were these schools are and what districts  have relatively higher number of low attendance schools.
+
+We take the attendance rate for a given year (# of attended days / total schools days) for each student and then we take the average of that rate in each school
+
+```{r warning = FALSE, echo = FALSE, fig.width = 9, fig.height = 8}
+
+school_attendance <- data2 %>% 
+  filter(year_attendance == 2018) %>% 
+  mutate(att_rate = attendance/278) %>% 
+  group_by(udise_code, district) %>%
+  summarise(avg_att = mean(att_rate))
+
+#Divide the average rates per school in 5 quantiles per district
+  
+school_attendance$quantiles <- ntile(school_attendance$avg_att, 5)
+
+#Count the number of schools in each quantile per district, and make a column for each of them
+
+district_quants_schools <- school_attendance %>%
+  group_by(district, quantiles) %>% 
+  tally() %>% 
+  pivot_wider(names_from = quantiles, values_from = n) %>% 
+  rename(quant_1 = 2, quant_2 = 3, quant_3 = 4, quant_4 = 5, quant_5 = 6)
+
+#Calculate performance of each district by dividing the number of schools in top quantiles by number of schools in the low quantiles. That would give us a proportion of high attendance schools per low attendance schools. We also calculate the total schools in each district
+
+district_quants_schools <- district_quants_schools %>%
+  group_by(district) %>% 
+  mutate(performance = (quant_5+quant_4)/(quant_1+quant_2), total_schools = quant_1 + quant_2 + quant_3 + quant_4 + quant_5)
+
+# we plot the performance index and the total schools per district.
+
+scale_bar <- 100
+
+district_quants_schools %>%
+  ggplot() +
+  geom_bar(aes(x = performance, y = fct_reorder(district, performance), fill = performance), stat = "identity") +
+  geom_bar(aes(x = total_schools/scale_bar, y = fct_reorder(district, performance)), group = 1, stat = "identity", alpha = 2/5) +
+  scale_fill_viridis(option = "C", direction = 1) +
+  theme_minimal() +
+  labs(title = "Attendance index of RTE students per district in 2018", subtitle = "The number of schools accepting RTE students in the district doesn't correlate \nwith their school attendance", caption = "Source: Education Department of Chhattisgarh", x = "", y = "") +
+  scale_x_continuous(name = "Attendance", sec.axis = sec_axis(trans = ~.*100, name = "Total schools")) +
+  theme_ipsum() +
+  theme(legend.position = "none", axis.title.x.top = element_text(color = "darkgrey", face = "bold",
+                                                                  hjust = 0.5),
+        axis.title.x.bottom = element_text(color = viridis(4, option ="C"), face = "bold", hjust = 0.5)) 
+
+
+```
+
+
+```{r warning = FALSE, echo = FALSE, fig.width = 7, fig.height = 7}
+
+#map the attendance rates per district
+
+perfomap <- district_quants_schools %>% dplyr::select(district, performance, total_schools)
+
+cg_rte_dist <- left_join(cg_rte_dist, perfomap, by = "district")
+
+
+ggplot() +
+  geom_map(map = map_df, data = cg_rte_dist, 
+           aes(map_id = id, fill = performance), 
+           color = "white", alpha = 2/4) +
+  geom_text(data = district_centers, aes(label = district, x = x, y = y, fontface = "bold"), 
+            color = "darkblue", size = 2.5) +
+  coord_map() + 
+  labs(title = "Attendance Index of RTE students per district", 
+       x = "", y = "", 
+       fill = "Attendance index",
+       caption = "Source: Department of School Education of Chhattisgarh") + 
+  theme_minimal() +
+  scale_fill_continuous(low = "red", high = "green") +
+  expand_limits(x = c(80, 85), y = c(17, 25)) +
+   theme(axis.text.x = element_blank(), axis.text.y = element_blank(), 
+  plot.caption = element_text(hjust = -1)) +
+  guides(fill = guide_colorbar(barwidth = 0.5, 
+                               barheight = 10, title.position = "left",
+                               title.theme = element_text(angle = 90),
+                               title.hjust = .5))
+
+
+```
+
+
+But we can see if it correlates with enrollment, to see if in there is any significant difference between the big or small schools
+
+```{r warning = FALSE, echo = FALSE, fig.width = 9, fig.height = 4}
+
+atten_lm <- data2 %>% 
+  filter(year_attendance == 2018 & gender != "NULL" & gender != "Other") %>% 
+  mutate(att_rate = attendance/278) %>% 
+  group_by(udise_code, district) %>%
+  summarise(avg_att = mean(att_rate))
+
+atten_lm$udise_code <- as.numeric(as.character(atten_lm$udise_code))
+
+enroll <- enrollment_2018 %>% 
+  pivot_longer(C001:C012, names_to = "class_code", values_to = "enrollment") %>% 
+  dplyr::select(udise_code, class_code, enrollment) %>% 
+  group_by(udise_code) %>% 
+  summarise(enrollment = sum(enrollment))
+
+
+atten_lm <- left_join(atten_lm, enroll, by = "udise_code")
+
+model_b <- lm(data = atten_lm, avg_att ~ enrollment + district)
+
+stargazer(model_b, title = "Simple model of RTE students' attendance on total enrollment", type = "text")
+
+atten_lm %>% 
+  filter(enrollment > 20) %>% 
+ggplot() +
+  geom_point(aes(enrollment, avg_att)) +
+  geom_smooth(aes(enrollment, avg_att)) 
+
+
+```
+
+
+We see there are no district with a stark difference of performance between the genders. But if we analyze it only at the gender level, we see some gaps:
+
+```{r warning = FALSE, echo = FALSE, fig.width = 9, fig.height = 4}
+school_attendance_gender <- data2 %>% 
+  filter(year_attendance == 2018 & gender != "Other" & gender != "NULL") %>% 
+  mutate(att_rate = attendance/278) %>% 
+  group_by(district, gender) %>%
+  summarise(avg_att = mean(att_rate, na.rm = TRUE))
+
+#Divide the average rates per school in 5 quantiles per district
+
+school_attendance_gender$quantiles <- ntile(school_attendance_gender$avg_att, 5)
+
+quants_schools_gender <-  school_attendance_gender %>%
+  group_by(gender, quantiles) %>% 
+  tally() %>% 
+  pivot_wider(names_from = quantiles, values_from = n) %>% 
+  rename(quant_1 = 2, quant_2 = 3, quant_3 = 4, quant_4 = 5, quant_5 = 6)
+
+quants_schools_gender %>% 
+  pivot_longer(cols = quant_1:quant_5, names_to = "quantiles", values_to = "n") %>% 
+  ggplot() +
+  geom_bar(aes(x = gender, y = n), stat = "identity", group = 1) +
+  facet_wrap(vars(quantiles))
+
+```
+
+We will observe a similar situation with respect to caste, at the district level there are no big differences:
+
+```{r warning = FALSE, echo = FALSE, fig.width = 9, fig.height = 7}
+
+#caste
+
+district_quants_schools_caste <- data2 %>% 
+  filter(year_attendance == 2018) %>% 
+  mutate(att_rate = attendance/278) %>% 
+  group_by(udise_code, district, caste) %>%
+  summarise(avg_att = mean(att_rate))
+
+#Divide the average rates per school in 5 quantiles per district
+
+district_quants_schools_caste$quantiles <- ntile(district_quants_schools_caste$avg_att, 5)
+
+#Count the number of schools in each quantile per district, and make a column for each of them
+
+district_quants_schools_caste <- district_quants_schools_caste %>%
+  group_by(district, caste, quantiles) %>% 
+  tally() %>% 
+  pivot_wider(names_from = quantiles, values_from = n) %>% 
+  rename(quant_1 = 3, quant_2 = 4, quant_3 = 5, quant_4 = 6, quant_5 = 7)
+
+#Calculate performance of each district by dividing the number of schools in top quantiles by number of schools in the low quantiles. That would give us a proportion of high attendance schools per low attendance schools. We also calculate the total schools in each district
+
+district_quants_schools_caste <- district_quants_schools_caste %>%
+  group_by(district, caste) %>% 
+  mutate(performance = (quant_5+quant_4)/(quant_1+quant_2), total_schools = quant_1 + quant_2 + quant_3 + quant_4 + quant_5)
+
+# we plot the performance index and the total schools per district.
+
+scale_bar <- 100
+
+district_quants_schools_caste %>%
+  group_by(district) %>% 
+  ggplot() +
+  geom_bar(aes(x = performance, y = fct_reorder(district, performance, na.rm=TRUE), fill = caste), position = "stack", stat = "identity") +
+  geom_bar(aes(x = total_schools/scale_bar, y = fct_reorder(district, performance)), group = 1, stat = "identity", alpha = 2/5) +
+  scale_fill_viridis(option = "D", direction = 1, discrete = TRUE) +
+  theme_minimal() +
+  labs(title = "Attendance index of RTE students per caste in 2018", subtitle = "", 
+       caption = "Source: Education Department of Chhattisgarh", x = "", y = "", fill = "") +
+  scale_x_continuous(name = "Performance", sec.axis = sec_axis(trans = ~.*100, name = "Total schools")) +
+  theme_ipsum() +
+  theme(legend.position = "bottom", axis.title.x.top = element_text(color = "black", face = "bold",
+                                                                    hjust = 0.5),
+        axis.title.x.bottom = element_text(color = "darkviolet", face = "bold", hjust = 0.5))
+```
+
+But when we only take into account the caste 
+
+```{r warning = FALSE, echo = FALSE, fig.width = 9, fig.height = 4}
+school_attendance_caste <- data2 %>% 
+  filter(year_attendance == 2018 & gender != "Other" & gender != "NULL") %>% 
+  mutate(att_rate = attendance/278) %>% 
+  group_by(district, caste) %>%
+  summarise(avg_att = mean(att_rate, na.rm = TRUE))
+
+#Divide the average rates per school in 5 quantiles per district
+
+school_attendance_caste$quantiles <- ntile(school_attendance_caste$avg_att, 5)
+
+school_attendance_caste <-  school_attendance_caste %>%
+  group_by(caste, quantiles) %>% 
+  tally() %>% 
+  pivot_wider(names_from = quantiles, values_from = n) %>% 
+  rename(quant_1 = 2, quant_2 = 3, quant_3 = 4, quant_4 = 5, quant_5 = 6)
+
+school_attendance_caste %>% 
+  pivot_longer(cols = quant_1:quant_5, names_to = "quantiles", values_to = "n") %>% 
+  ggplot() +
+  geom_bar(aes(x = caste, y = n), stat = "identity", group = 1) +
+  facet_wrap(vars(quantiles))
+
+```
+
+We can also see the evolution of the attendance index in time
+
+```{r warning = FALSE, echo = FALSE, fig.width = 9, fig.height = 4}
+
+
+time_perfo <- data2 %>% 
+  mutate(att_rate = attendance/278) %>% 
+  group_by(udise_code, district, year_attendance) %>%
+  summarise(avg_att = mean(att_rate))
+
+#Divide the average rates per school in 5 quantiles per district
+
+time_perfo$quantiles <- ntile(time_perfo$avg_att, 5)
+
+
+#Count the number of schools in each quantile per district, and make a column for each of them
+
+time_perfo_quant <- time_perfo %>%
+  group_by(district, quantiles, year_attendance) %>% 
+  tally() %>% 
+  pivot_wider(names_from = quantiles, values_from = n) %>% 
+  rename(quant_1 = 3, quant_2 = 4, quant_3 = 5, quant_4 = 6, quant_5 = 7)
+
+#Calculate performance of each district by dividing the number of schools in top quantiles by number of schools in the low quantiles. That would give us a proportion of high attendance schools per low attendance schools. We also calculate the total schools in each district
+
+time_perfo_quant <- time_perfo_quant %>%
+  group_by(district, year_attendance) %>% 
+  mutate(performance = (quant_5+quant_4)/(quant_1+quant_2), total_schools = quant_1 + quant_2 + quant_3 + quant_4 + quant_5)
+
+# we plot the performance index and the total schools per district.
+
+scale <- 1000
+
+time_perfo_quant %>%
+  filter(district == "Raipur") %>%
+  group_by(year_attendance) %>% 
+  ggplot() +
+  geom_line(aes(x = year_attendance, y = performance, color = "Performance"), size = 1) +
+  geom_line(aes(x = year_attendance, y = total_schools/scale, color = "RTE schools"), size = 1) +
+  theme_minimal() +
+  labs(title = "Performance index and number of schools accepting RTE students in Raipur", subtitle = "Whereas the total schools skyrocketed, their performance didn't change significantly", caption = "Source: Education Department of Chhattisgarh", x = "", y = "", color = "") +
+  theme(legend.position = "bottom", axis.title = element_blank()) +
+  scale_y_continuous(name = "Performance", sec.axis = sec_axis(trans = ~.*1000, name = "Total schools")) +
+  scale_x_continuous(breaks = 2010:2018)
+
+element_rect(fill = "#f5f5f2", color = NA)
+```
+
+
+## drop out rates
+
+```{r warning = FALSE, echo = FALSE, fig.width = 9, fig.height = 4}
+
+seats <- read.csv("seats_2010to2018.csv", stringsAsFactors = FALSE)
+
+seats <- seats %>% rename(district_code = 1)
+
+seats$total_seats <- as.numeric(seats$total_seats)
+seats$rte_seats <- as.numeric(seats$rte_seats)
+seats$rte_admitted <- as.numeric(seats$rte_admitted)
+seats$rte_dropout <- as.numeric(seats$rte_dropout)
+
+
+seats_2018 <- seats %>% 
+  filter(year == 2018) %>% 
+  dplyr::select(udise_code, class_code, total_seats)
+
+
+enroll_seats <- enrollment_2018 %>% 
+  dplyr::select(-district, -school, -block, -cluster, -school_management, -clu_cd, -language_1, -language_2, -cluster) %>% 
+  pivot_longer(cols = C001:C012, names_to = "class_code", values_to = "enrollment") %>% 
+  filter(enrollment != 0)
+
+seats_enrollment_2018 <- inner_join(enroll_seats, seats_2018, by = c("udise_code", "class_code"))
+
+
+seats_enrollment_2018 %>% 
+  group_by(udise_code, class_code) %>%
+  mutate(gap = total_seats-enrollment) %>% 
+ggplot() +
+  geom_freqpoly(aes(gap))
+```
+
+```{r echo = FALSE, fig.width = 9, fig.height = 6}
+seats %>% 
+  filter(!is.na(rte_dropout)) %>% 
+  group_by(district) %>% 
+  summarise(drop = sum(rte_dropout), admin = sum(rte_admitted), drop_out_rate = drop/admin) %>% 
+  ggplot() +
+  geom_bar(aes(drop_out_rate, fct_reorder(district, drop_out_rate), fill = drop_out_rate), stat = "identity") +
+  scale_fill_viridis(option = "C", direction = -1) +
+  theme_minimal() +
+  labs(title = "RTE drop out rates per district (2010-2019)", subtitle = "", caption = "Source: Education Department of Chhattisgarh", x = "", y = "") +
+  theme(legend.position = "none")
+
+```
+
+ADD TOTAL NUMBER OF RTE STUDENTS
+
+```{r echo = FALSE, warning=FALSE, fig.width = 9, fig.height = 4}
+seats %>% 
+  filter(!is.na(rte_dropout)) %>% 
+  group_by(year) %>% 
+  summarise(drop = sum(rte_dropout), admin = sum(rte_admitted), drop_out_rate = drop/admin) %>% 
+  ggplot() +
+  geom_line(aes(year, drop_out_rate), color = "blue", size = 1) +
+  theme_minimal() +
+  labs(title = "Evolution of RTE drop out rate in Chhattisgarh", subtitle = "", caption = "Source: Education Department of Chhattisgarh", x = "", y = "") +
+  scale_x_continuous(breaks = 2010:2019)
+```
+
+```{r echo = FALSE, warning=FALSE, fig.width = 9, fig.height = 4}
+
+seats %>% 
+  filter(!is.na(rte_dropout)) %>% 
+  group_by(year, class_name) %>% 
+  summarise(drop = sum(rte_dropout), admin = sum(rte_admitted), drop_out_rate = drop/admin) %>% 
+  ggplot() +
+  geom_line(aes(year, drop_out_rate, color = class_name), size = 1) +
+  theme_minimal() +
+  labs(title = "Evolution of RTE drop out rate by class", subtitle = "", caption = "Source: Education Department of Chhattisgarh", x = "", y = "", color = "") +
+  scale_x_continuous(breaks = 2010:2019) +
+  scale_color_viridis(option = "C", discrete = TRUE)
+
+```
+
+## Entering students
+
+ADD A LINE MARKING THE START OF DIGITALIZATION RTE NLINE
+
+```{r echo=FALSE, fig.width = 9, fig.height = 4}
+
+attendance_performance %>% 
+  group_by(year_join) %>% 
+  summarise(n = n()) %>% 
+  ggplot() +
+  geom_line(aes(year_join, n), color = "blue", size = 1) +
+  theme_minimal() +
+  labs(y = "", x = "", title = "Total number of students entering school through RTE") +
+  scale_x_continuous(breaks = 2010:2019)
+```
+
+```{r echo = FALSE, fig.width = 9, fig.height = 4}
+attendance_performance %>% 
+  group_by(year_join, caste) %>% 
+  summarise(n = n()) %>% 
+  ggplot() +
+  geom_line(aes(year_join, n, color = caste), size = 1) +
+  theme_minimal() +
+  labs(y = "", x = "", color = "", title = "Total number of students entering school through RTE per caste") +
+  scale_x_continuous(breaks = 2010:2019)
+```
+
+
+```{r echo = FALSE, fig.width = 9, fig.height = 4}
+
+attendance_performance %>% 
+  filter(gender != "Other") %>% 
+  group_by(year_join, gender) %>% 
+  summarise(n = n()) %>% 
+  ggplot() +
+  geom_line(aes(year_join, n, color = gender), size = 1) +
+  theme_minimal() +
+  labs(y = "", x = "", color = "", title = "Total number of students entering school through RTE per gender") +
+  scale_x_continuous(breaks = 2010:2019)
+
+```
+
+```{r echo = FALSE, fig.width = 9, fig.height = 4}
+# hacer en 4 grupos de clases
+
+attendance_performance %>% 
+  group_by(year_join, class_code) %>% 
+  summarise(n = n()) %>% 
+  ggplot() +
+  geom_line(aes(year_join, n, color = class_code), size = 1) +
+  theme_minimal() +
+  labs(y = "", x = "", color = "", title = "Total number of students entering school through RTE per gender") +
+  scale_x_continuous(breaks = 2010:2019)
+```
+
+
+
+```{r echo = FALSE, warning = FALSE, fig.width = 9, fig.height = 4}
+
+## student_data_cg <- left_join(student_data_cg, codes_names, by = "district_code")
+## por que hice eso?
+
+rte_growth <- attendance_performance %>% 
+  group_by(year_join, district) %>% 
+  summarise(n = n())
+
+rte_growth <- rte_growth %>%
+  group_by(district) %>% 
+  arrange(year_join, .by_group = TRUE) %>%
+  mutate(pct_change = round((n/lag(n) - 1) * 100))
+
+rte_growth <- rte_growth %>% 
+  group_by(district) %>% 
+  mutate(avg_ch = round(mean(pct_change, na.rm = TRUE)))
+
+rte_growth %>% 
+  group_by(year_join) %>% 
+  mutate(pct_ch = mean(pct_change, na.rm = TRUE)) %>% 
+  ggplot() +
+  geom_line(aes(year_join, pct_ch), size = 1, color = "blue") +
+  theme_minimal() +
+  labs(y = "", x = "", color = "", title = "Average percentage change of new students in Chhattisgarh") +
+  scale_x_continuous(breaks = 2010:2019)
+
+```
+
+```{r echo = FALSE, fig.width = 7, fig.height = 7}
+
+cg_ch <- left_join(cg_rte_dist, rte_growth, by = "district") %>% 
+  dplyr::select(district, id, avg_ch)
+
+ggplot() +
+  geom_map(map = map_df, data = cg_ch, 
+           aes(map_id = id, fill = avg_ch), 
+           color = "white", alpha = 2/4) +
+  geom_text(data = district_centers, aes(label = district, x = x, y = y, fontface = "bold"), 
+            color = "darkblue", size = 2.5) +
+  coord_map() + 
+  labs(x = "", y = "", 
+       title = "Average growth percentage of incoming RTE students (2010-2019)", 
+       fill = "",
+       caption = "Source: Department of School Education of Chhattisgarh") + 
+  theme_minimal() +
+  scale_fill_continuous(low = "red", high = "green") +
+  expand_limits(x = c(80, 85), y = c(17, 25)) +
+   theme(axis.text.x = element_blank(), axis.text.y = element_blank(), 
+  plot.caption = element_text(hjust = -1)) +
+  guides(fill = guide_colorbar(barwidth = 0.5, 
+                               barheight = 10, title.position = "left",
+                               title.theme = element_text(angle = 90),
+                               title.hjust = .5))
+
+```
+
+## Fees
+
+
+```{r echo = FALSE}
+
+fees <- read.csv("cg_fees_vf.csv", na.strings=c("", " "), stringsAsFactors = FALSE)
+
+fees <- fees %>% 
+  rename(district_code = 1)
+
+fees <- fees %>% filter(!is.na(fee))
+
+fees$district_code <- as.numeric(fees$district_code)
+
+fees$udise_code <- as.numeric(fees$udise_code)
+
+fees$fee <- as.numeric(fees$fee)
+
+fees$district <- str_to_title(fees$district)
+
+fees$district <- fees$district %>% 
+  str_replace("Janjgir", "Janjgir-Champa")
+fees$district <- fees$district %>% 
+  str_replace("Koria", "Koriya")
+fees$district <- fees$district %>% 
+  str_replace("Gariyaband", "Gariaband")
+fees$district <- fees$district %>% 
+  str_replace("Balodabazar-Bhathapara", "Baloda Bazar")
+fees$district <- fees$district %>% 
+  str_replace("Sakti", "Janjgir-Champa")
+fees$district <- fees$district %>% 
+  str_replace("Sarguja", "Surguja")
+
+fees <- fees %>% 
+  filter(!grepl("C0",district))
+
+
+for (i in seq_along(fees$year)) {
+    fees$year <- str_replace(fees$year, "^1$", "2010")
+    fees$year <- str_replace(fees$year, "^2$", "2011")
+    fees$year <- str_replace(fees$year, "^3$", "2012")
+    fees$year <- str_replace(fees$year, "^4$", "2013")
+    fees$year <- str_replace(fees$year, "^5$", "2014")
+    fees$year <- str_replace(fees$year, "^6$", "2015")
+    fees$year <- str_replace(fees$year, "^7$", "2016")
+    fees$year <- str_replace(fees$year, "^8$", "2017")
+    fees$year <- str_replace(fees$year, "^9$", "2018")
+    fees$year <- str_replace(fees$year, "^10$", "2019")
+ break
+}
+
+years <- c("2010", "2011", "2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019")
+
+classes <- c("C001", "C002", "C003", "C004", 
+             "C005", "C006", "C007", "C008", 
+             "C009", "C010", "C011", "C012")
+
+fees <- fees %>% filter(year %in% years)
+
+fees <- fees %>% filter(class_code %in% classes)
+
+fees$year <- as.numeric(fees$year)
+
+
+```
+
+Visualise average fees per district
+
+change it from average to MEDIAN
+
+```{r echo = FALSE, fig.height=7, fig.width=7}
+
+avg_fees <- fees %>%
+  group_by(district) %>% 
+  summarise(avg_fee = round(median(as.numeric(fee), na.rm = TRUE)))
+
+cg_fee <- left_join(cg_rte_dist, avg_fees, by = "district") %>% 
+  dplyr::select(district, id, avg_fee)
+
+ggplot() +
+  geom_map(map = map_df, data = cg_fee, 
+           aes(map_id = id, fill = avg_fee), 
+           color = "white", alpha = 2/4) +
+  geom_text(data = district_centers, aes(label = district, x = x, y = y, fontface = "bold"), 
+            color = "darkblue", size = 2.5) +
+  coord_map() + 
+  labs(x = "", y = "", 
+       title = "Average school fees in Chhattisgarh", 
+       fill = "",
+       caption = "Source: Department of School Education of Chhattisgarh") + 
+  theme_minimal() +
+  scale_fill_viridis(option = "D") +
+  expand_limits(x = c(80, 85), y = c(17, 25)) +
+   theme(axis.text.x = element_blank(), axis.text.y = element_blank(), 
+  plot.caption = element_text(hjust = -1)) +
+  guides(fill = guide_colorbar(barwidth = 0.5, 
+                               barheight = 10, title.position = "left",
+                               title.theme = element_text(angle = 90),
+                               title.hjust = .5))
+
+```
+
+
+Visualize correlation between school fees and attendance rates, number of RTE students
+
+
+
+```{r}
+
+atten_fee <- data2 %>% 
+  rename(year = year_attendance) %>% 
+  mutate(att_rate = attendance/278) %>% 
+  group_by(udise_code, year, district) %>%
+  summarise(avg_att = mean(att_rate))
+
+atten_fee$udise_code <- as.numeric(atten_fee$udise_code)
+
+fees_att <- fees %>% 
+  dplyr::select(year, district, udise_code, class_code, fee) %>% 
+  group_by(udise_code, year, district) %>% 
+  summarise(fee = mean(fee, na.rm = TRUE))
+
+attendance_fees <- inner_join(atten_fee, fees_att, by = c("district", "udise_code", "year"))
+
+attendance_fees$fee <- as.integer(attendance_fees$fee)
+
+attendance_fees %>% 
+  filter(fee < 40000) %>% 
+ggplot() +
+  geom_point(aes(avg_att, fee)) +
+  geom_smooth(aes(avg_att, fee)) +
+  theme_minimal() +
+  labs(x = "Attendance Rate", y = "Fees", title = "No correlation between school fees and student's attendance", subtitle = "There is no statistical difference of school attendance between students of low and high income schools")
+
+
+```
+
+
