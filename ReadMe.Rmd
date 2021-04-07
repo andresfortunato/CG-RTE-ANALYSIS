@@ -21,7 +21,6 @@ for (p in packages){
 
 ## Introduction
 
-bla bla bla 
 
 ```{r echo = FALSE, warning=FALSE}
 
